@@ -1,0 +1,815 @@
+---
+title: "CRM_sim2"
+output: pdf_document
+date: "2026-03-25"
+---
+
+The markdown file is to run the saved results from the CRM simulation R file with the following priors:
+log(ID70) ~ N(4, 0.8^2), truncated to (3,7)
+log(a) ~ Unif(log(0.3), log(0.8))
+
+Decision rules are as follows: 
+  
+1. If ID70 is more than 2 log10 units above the current dose, we escalate the next dose by 2 log10 units. Move on to the next check if this is not met.
+
+2. We look at the proportion of infection probability at the current dose that exceeds 0.6, if the percentage is lower than 75%, escalate by one log10 unit, otherwise, move on to the next check.
+
+3. Now look at the proportion of infection probability at the current dose that exceeds 0.8, if the percentage is higher than 95%, de-escalate by one log10 unit.
+
+4. If any of the conditions are not met above, maintain the current dose for the next cohrot.
+
+We are taking the mean of posterior probabilities to see if the proportion exceeds 0.6/0.8 as stated above. 
+
+```{r}
+library(rstan)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(magick)
+library(truncnorm)
+library(cowplot)
+
+setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project')
+```
+
+```{r}
+set.seed(42)
+n_sims <- 1000
+doses <- seq(10^4, 10^9, by=10000)
+dose_grid <- 10^seq(1, 9, length.out = 101)
+
+beta_poisson <- function(dose, a, b) {
+  1 - (1 + dose/b)^-a
+}
+
+log_a <- runif(n_sims, log(0.3), log(0.8))
+log10_id70 <- rtruncnorm(
+  n_sims, a = 3, b = 7, mean = 4, sd = 0.8
+)
+a = exp(log_a)
+id70 <- 10^log10_id70
+
+prior_data_3 <- data.frame(
+  sim = 1:n_sims,
+  a = a,
+  b = id70 / (0.3^(-1 / a) - 1)
+)
+
+# generate probabilities for each dose level
+plot_data_3 <- prior_data_3 %>%
+  group_by(sim) %>%
+  do(data.frame(dose=dose_grid, prob = beta_poisson(dose_grid, .$a, .$b)))
+
+# Calculate the 95% Credible Interval (Ribbon Data)
+# group by dose to find the range of 'prob' across all 1000 sims
+cri_data <- plot_data_3 %>%
+  group_by(dose) %>%
+  summarise(
+    lower = quantile(prob, 0.025),
+    median = quantile(prob, 0.50),
+    upper = quantile(prob, 0.975),
+    Q1 = quantile(prob, 0.25),
+    Q3 = quantile(prob, 0.75)
+  )
+```
+
+
+```{r}
+plot_aggregated_curve_with_points <- function(example_posterior, one_sim_points, id70, prior_band, true_prior) {
+  
+  img_url = c()
+  plot_dir <- "C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/example posterior sim"
+  
+  shared_legend <- NULL
+  
+  for (cohort_i in sort(unique(one_sim_points$cohort))) {
+  
+  
+    df_cohort <- example_posterior %>%
+      filter(cohort == cohort_i)
+  
+    # keep points observed up to this cohort
+    pts <- one_sim_points %>%
+      filter(cohort <= !!cohort_i) 
+    
+    # collapse duplicate point locations into one label
+    pts_lab <- pts %>%
+    group_by(current_dose, prob) %>%
+    summarise(
+      label = paste(cohort, collapse = ","),
+      .groups = "drop"
+    )
+    
+    # ID70 summary for this cohort
+    id70_df <- id70 %>%
+      filter(cohort == !!cohort_i)
+    
+    p <- ggplot(df_cohort, aes(x = dose, y = mean)) +
+      # 95% credible intervals for the posterior curve
+      geom_ribbon(aes(ymin = lower, ymax = upper,
+                      fill = "Posterior dose-response 95% CrI"),
+                  alpha = 0.25
+                  ) +
+      
+      geom_ribbon(aes(ymin = q1, ymax = q3,
+                      fill = "Posterior dose-response 50% CrI"),
+                  alpha = 0.25
+                  ) +
+    
+      # 95% ID70 range as vertical band
+      geom_rect(
+        data = id70_df,
+        aes(xmin = id70_lower, xmax = id70_upper, ymin = -Inf, ymax = Inf, 
+            fill = "Posterior ID70 95% CrI"),
+        inherit.aes = FALSE,
+        alpha = 0.2
+      ) +
+      
+      # dashed line for 95% prior interval to contrast the posterior shrinking
+      geom_line(
+        data = prior_band,
+        aes(x = dose, y = lower,
+            color = "Prior 95% CrI"),
+        linetype = "dashed",
+        linewidth = 0.5
+      ) +
+      
+      geom_line(
+        data = prior_band,
+        aes(x = dose, y = upper,
+            color = "Prior 95% CrI"),
+        linetype = "dashed",
+        linewidth = 0.5
+      ) +
+      
+      # points for observation
+      geom_point(
+        data = pts,
+        aes(x = current_dose, y = prob),
+        color = "black",
+        size = 2.5,
+        inherit.aes = FALSE
+      ) +
+      
+      geom_text(
+        data = pts_lab,
+        aes(x = current_dose, y = prob, label = label),
+        nudge_y = 0.04,
+        size = 4,
+        inherit.aes = FALSE
+      ) +
+      
+      # horizontal line at 0.7
+      geom_hline(aes(yintercept = 0.70, color = "70% infection"), 
+                 linewidth = 0.4) +
+      
+      geom_hline(
+        aes(yintercept = 0.60,
+          color = "60-80% infection"),
+        linetype = "dashed",
+        linewidth = 0.2
+      ) +
+      
+      geom_hline(
+        aes(yintercept = 0.80,
+          color = "60-80% infection"),
+        linetype = "dashed",
+        linewidth = 0.2
+      ) +
+      
+      # true prior curve
+      geom_line(
+        data = true_prior,
+        aes(x = dose, y = prob,
+            color = "True prior dose-response"),
+        linetype = "solid",
+        linewidth = 0.5
+      ) +
+      
+      scale_x_log10(
+        breaks = 10^(1:9),               # Sets ticks at each power of 10
+        labels = function(x) log10(x)    # Converts 10, 100, 1000 -> 1, 2, 3
+      ) +
+      
+      scale_color_manual(
+        values = c(
+          "Prior 95% CrI" = "blue",
+          "True prior dose-response" = "black",
+          "70% infection" = "red",
+          "60-80% infection" = "red"
+        )) +
+
+      scale_fill_manual(
+        values = c(
+          "Posterior dose-response 95% CrI" = "steelblue",
+          "Posterior dose-response 50% CrI" = "blue",
+          "Posterior ID70 95% CrI" = "gray46"
+        )) +
+      
+      coord_cartesian(ylim = c(0, 1.05)) +
+      
+      labs(
+        title = paste("Example posterior curve after Cohort", cohort_i),
+        x = expression("Dose (" * log[10] ~ "CFU)"),
+        y = "Probability of infection"
+      ) +
+      
+      theme_bw() +
+      
+      guides(
+        fill = guide_legend(nrow = 2, byrow = TRUE),
+        color = guide_legend(nrow = 2, byrow = TRUE)
+      ) +
+      
+      theme(
+        legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.text = element_text(size = 13),
+        legend.key.width = unit(1.8, "cm"),
+        legend.key.height = unit(0.6, "cm"),
+        legend.spacing.x = unit(0.6, "cm"),
+        legend.spacing.y = unit(0.3, "cm"),
+        legend.box = "vertical",
+        legend.box.margin = margin(5, 5, 5, 5)
+      )
+    
+    # extract legend only once
+    if (is.null(shared_legend)) {
+      shared_legend <- cowplot::get_legend(p)
+    }
+    
+    # remove legend from individual plots
+    p_nolegend <- p +
+      theme(
+        legend.position = "none"
+      )
+    
+    # saving the individual plots to the designated folder
+    file_name <- paste0("aggregated_posterior_with_points_cohort_", cohort_i, ".png")
+    full_path <- file.path(plot_dir, file_name)
+    
+    ggsave(
+        filename = file_name,
+        path = plot_dir,
+        plot = p_nolegend,
+        width = 6,
+        height = 4
+      )
+    
+    # Append the path to our list
+    img_url <- c(img_url, full_path)
+    
+  }
+  
+  # read cohort plots
+  imgs <- image_read(img_url)
+  
+  # create montage first to preserve original cohort plot sizing
+  # but add a blank sixth panel
+  panel_info <- image_info(imgs[1])
+  panel_width <- panel_info$width
+  panel_height <- panel_info$height
+  
+  blank_panel <- image_blank(
+    width = panel_width,
+    height = panel_height,
+    color = "white"
+  )
+  
+  # save shared legend
+  legend_path <- file.path(plot_dir, "shared_legend.png")
+  
+  ggsave(
+    filename = legend_path,
+    plot = cowplot::plot_grid(shared_legend),
+    width = 7,
+    height = 3
+  )
+  
+  # read and shrink legend
+  legend_img <- image_read(legend_path)
+  
+  #
+  legend_img <- image_resize(
+    legend_img,
+    paste0(round(panel_width * 0.95), "x", round(panel_height * 1.1))
+  )
+  
+  # center legend inside blank panel
+  legend_info <- image_info(legend_img)
+  
+  x_offset <- round((panel_width - legend_info$width) / 2)
+  y_offset <- round((panel_height - legend_info$height) / 2)
+  
+  legend_panel <- image_composite(
+    blank_panel,
+    legend_img,
+    offset = paste0("+", x_offset, "+", y_offset)
+  )
+  
+  # add legend panel as the 6th image
+  imgs_with_legend <- c(imgs, legend_panel)
+  
+  final_with_legend <- image_montage(
+    imgs_with_legend,
+    tile = "2x3",
+    geometry = paste0(panel_width, "x", panel_height, "+10+10"),
+    bg = "white"
+  )
+  
+  
+  # Save the final montage
+  image_write(final_with_legend, "C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/example posterior sim/combined_cohort_plots_with_decision.png", format = 'png')
+  
+}
+```
+
+
+
+loading the simulated results again so we can report the results 
+```{r}
+setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/old decision rule')
+
+all_posteriors <- read.csv("posterior_sim_result_3.csv")
+all_paths_df <- read.csv("all_paths_3.csv")
+id70_df <- read.csv("id70_3.csv")
+```
+
+
+The code below is to produce posterior plots for one of the simulation as an example to illustrate how the updates of posterior after each cohort and also the decision rules that were implemented (ie. how the escalation and de-escalation work for this example)
+
+The plot involves 50% and 95% credible intervals for the posterior dose-response model, as well as 95% interval for ID70 in each cohort
+```{r}
+
+# get results from simulation 1 to check if decision rules were correctly executed
+one_sim_points <- all_paths_df %>%
+  filter(sim_id == 1)
+
+example_posterior <- all_posteriors %>% 
+    filter(sim_id == 1)
+
+example_id70 <- id70_df %>%
+    filter(sim_id == 1)
+
+# getting the true prior for the example to be included in the plot
+set.seed(42)
+dose_grid <- 10^seq(1, 9, length.out = 101)
+true_log10_id70 <- rtruncnorm(1, a = 3, b = 7, mean = 4, sd = 0.8)
+true_log_a <- runif(1, log(0.3), log(0.8))
+  
+true_a <- exp(true_log_a)
+true_id70 <- 10^true_log10_id70
+true_b <- true_id70 / (0.3^(-1/true_a) - 1)
+true_p <- p_inf(dose_grid, true_a, true_b)
+
+true_prior <- data.frame(
+  dose = dose_grid,
+  prob = true_p
+)
+
+plot_aggregated_curve_with_points(example_posterior, one_sim_points, example_id70, cri_data, true_prior)
+
+```
+
+
+
+```{r}
+id70_summary_by_cohort <- id70_df %>%
+  group_by(cohort) %>%
+  summarise(
+    id70_mean = log10(mean(mean)),
+    id70_median = log10(median(mean)),
+    id70_sd = log10(sd(mean)),
+    id70_lo = log10(quantile(mean, 0.025)),
+    id70_hi = log10(quantile(mean, 0.975)),
+    id70_q1 = log10(quantile(mean, 0.25)),
+    id70_q3 = log10(quantile(mean, 0.75)),
+    n_trials = n(),
+    .groups = "drop"
+  )
+
+id70_summary_by_cohort
+```
+
+The mean of ID70 is about 5.10 dose across 1000 simulations
+```{r}
+# mean number for ID70 across all simulation
+mean(id70_df$mean)
+
+print(log10(mean(id70_df$mean)))
+```
+
+
+```{r}
+true_param <- read.csv("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/old decision rule/1000_true_params.csv")
+```
+
+
+The average total number of participants (sample size required) across 1000 simulations 
+```{r}
+
+final_trial <- all_paths_df %>%
+  group_by(sim_id) %>%
+  slice_max(order_by = cohort, n=1, with_ties = FALSE) %>%
+  ungroup() %>%
+  mutate(total_enrolled = cohort * 5, 
+         final_log10_dose = log10(current_dose))
+
+final_trial <- final_trial %>% 
+  left_join(true_param, by = "sim_id") %>%
+  mutate(
+    dose_error =
+      final_log10_dose - true_log10_id70,
+
+    abs_dose_error =
+      abs(dose_error),
+
+    squared_dose_error =
+      dose_error^2
+  )
+
+```
+
+
+```{r}
+paths_summary <- final_trial %>%
+  summarise(
+    mean_total_sample_size = mean(total_enrolled),
+    quantile_95_sample_size = quantile(total_enrolled, 0.95),
+    median_number_of_cohort = median(cohort),
+    median_final_CRM_recommended_dose = log10(median(current_dose)),
+    mean_absolute_bias = mean(abs_dose_error),
+    mean_RMSE = sqrt(mean(dose_error^2))
+  )
+
+paths_summary
+```
+
+```{r}
+final_trial %>% 
+  summarise(
+    full_trial = sum(total_enrolled == 35, na.rm = TRUE),
+    stop_early = sum(total_enrolled != 35, na.rm = TRUE)
+  )
+```
+
+
+```{r}
+ggplot(id70_summary_by_cohort, aes(x = cohort, y = id70_median)) +
+  geom_line() +
+  geom_point() +
+  geom_errorbar(aes(ymin = id70_lo, ymax = id70_hi), width = 0.1) +
+  scale_y_log10() +
+  labs(
+    x = "Cohort",
+    y = "Estimated ID70",
+    title = "Estimated ID70 across cohorts"
+  )
+```
+
+```{r,fig.width=16, fig.height=6}
+final_id_70 <- id70_df %>%
+  group_by(sim_id) %>%
+  slice_max(order_by = cohort, n=1, with_ties = FALSE) %>%
+  ungroup() %>%
+  mutate(
+    log10_id70_mean = log10(mean),
+    log10_id70_lower = log10(id70_lower), 
+    log10_id70_upper = log10(id70_upper), 
+  ) %>%
+  left_join(true_param, by = "sim_id") %>%
+  mutate(
+    coverage = ifelse(
+      true_log10_id70 >= log10_id70_lower &
+      true_log10_id70 <= log10_id70_upper,
+      "Covered", "Not covered"
+    )
+  ) %>%
+  arrange(log10_id70_mean) %>%
+  mutate(sim_order = row_number())
+
+p <- ggplot(final_id_70, aes(x = sim_order)) +
+
+  # 95% posterior credible intervals
+  geom_linerange(
+    aes(
+      ymin = log10_id70_lower,
+      ymax = log10_id70_upper
+    ),
+    colour = "grey65",
+    alpha = 0.25,
+    linewidth = 0.2
+  ) +
+
+  # Posterior mean
+  geom_line(
+    aes(y = log10_id70_mean),
+    colour = "black",
+    linewidth = 0.5
+  ) +
+
+  # True ID70 values
+  geom_point(
+    aes(
+      y = true_log10_id70,
+      colour = coverage
+    ),
+    size = 0.35,
+    alpha = 0.7
+  ) +
+
+  scale_colour_manual(
+    values = c(
+      "Covered" = "#2C7BB6",
+      "Not covered" = "#D7191C"
+    )
+  ) +
+
+  scale_x_continuous(
+    breaks = seq(0, 1000, 200),
+    expand = expansion(mult = c(0.01, 0.01))
+  ) +
+
+  labs(
+    x = "Simulation (ordered by posterior mean)",
+    y = expression(log[10](ID70)),
+    colour = "True ID70"
+  ) +
+
+  theme_classic(base_size = 12) +
+
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(size = 11),
+    legend.text = element_text(size = 10),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+p2 <- ggplot(final_id_70, aes(x = sim_order)) +
+
+  # 95% posterior credible intervals
+  geom_ribbon(
+    aes(
+      ymin = log10_id70_lower,
+      ymax = log10_id70_upper
+    ),
+    fill = "grey75",
+    alpha = 0.5
+  ) +
+
+  # Posterior mean
+  geom_line(
+    aes(y = log10_id70_mean),
+    colour = "black",
+    linewidth = 0.6
+  ) +
+
+  # True ID70 values
+  geom_point(
+    aes(
+      y = true_log10_id70,
+      colour = coverage
+    ),
+    size = 0.5,
+    alpha = 0.7
+  ) +
+
+  scale_colour_manual(
+    values = c(
+      "Covered" = "#2C7BB6",
+      "Not covered" = "#D7191C"
+    )
+  ) +
+
+  labs(
+    x = "Simulation (ordered by posterior mean)",
+    y = expression(log[10](ID70)),
+    colour = "True ID70"
+  ) +
+
+  theme_classic(base_size = 12) +
+
+  theme(
+    legend.position = "bottom"
+  )
+
+p2
+```
+
+```{r}
+final_id_70_summary <- final_id_70 %>%
+  summarise(
+    n_simulations = n(),
+    n_covered = sum(coverage == "Covered"),
+    coverage_probability = mean(coverage == "Covered")
+  )
+
+final_id_70_summary
+```
+
+
+```{r, fig.width=16, fig.height=6}
+final_id_70_error <- final_id_70 %>%
+  mutate(
+    error_mean = log10_id70_mean - true_log10_id70,
+    error_lower = log10_id70_lower - true_log10_id70,
+    error_upper = log10_id70_upper - true_log10_id70)
+  # ) %>%
+  # arrange(error_mean) %>%
+  # mutate(sim_order = row_number())
+
+p3 <- ggplot(final_id_70_error, aes(x = sim_id)) +
+
+  geom_linerange(
+    aes(
+      ymin = error_lower,
+      ymax = error_upper,
+      colour = coverage
+    ),
+    alpha = 0.4,
+    linewidth = 0.3
+  ) +
+
+  geom_hline(
+    yintercept = 0,
+    linetype = "dashed",
+    colour = "black",
+    linewidth = 0.5
+  ) +
+
+  scale_colour_manual(
+    values = c(
+      "Covered" = "#2C7BB6",
+      "Not covered" = "#D7191C"
+    )
+  ) +
+  
+  guides(
+  colour = guide_legend(
+    override.aes = list(
+      linewidth = 2,
+      alpha = 1
+      )
+    )
+  ) +
+
+  labs(
+    x = "Simulation (ordered by estimation error)",
+    y = expression(
+      log[10](ID70[posterior]) -
+      log[10](ID70[true])
+    ),
+    colour = "Coverage"
+  ) +
+
+  theme_classic(base_size = 12) +
+
+  theme(
+    # X and Y axis titles
+  axis.title.x = element_text(size = 16),
+  axis.title.y = element_text(size = 16),
+
+  # X and Y axis tick labels
+  axis.text.x = element_text(size = 14),
+  axis.text.y = element_text(size = 14),
+
+  # Legend title and labels
+  legend.title = element_text(size = 15),
+  legend.text = element_text(size = 14),
+
+  # Legend position
+  legend.position = "bottom",
+
+  # Legend spacing
+  legend.key.width = unit(1.5, "cm")
+  )
+
+ggsave("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/prior_predictive_posterior_ID70coverage.png", p3,
+       width = 16, height = 6)
+
+ggsave("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/prior_predictive_posterior_ID70coverage.pdf", p3,
+       width = 16, height = 6)
+
+p3
+
+```
+
+
+
+What if we start the dose at 10^3?
+
+here is the results for comparison
+
+```{r}
+setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/old decision rule')
+
+start3_all_posteriors <- read.csv("posterior_sim_result_start3.csv")
+start3_all_paths_df <- read.csv("all_paths_start3.csv")
+start3_id70_df <- read.csv("id70_start3.csv")
+```
+
+```{r}
+start3_final_trial <- start3_all_paths_df %>%
+  group_by(sim_id) %>%
+  slice_max(order_by = cohort, n=1, with_ties = FALSE) %>%
+  ungroup() %>%
+  mutate(total_enrolled = cohort * 5)
+
+start3_paths_summary <- start3_final_trial %>%
+  summarise(
+    mean_total_sample_size = mean(total_enrolled),
+    quantile_95_sample_size = quantile(total_enrolled, 0.95),
+    median_number_of_cohort = median(cohort),
+    median_target_dose = log10(median(current_dose))
+  )
+
+start3_paths_summary
+```
+
+What if we start the dose at 10^5?
+
+here is the results for comparison
+
+```{r}
+setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/old decision rule')
+
+start5_all_posteriors <- read.csv("posterior_sim_result_start5.csv")
+start5_all_paths_df <- read.csv("all_paths_start5.csv")
+start5_id70_df <- read.csv("id70_start5.csv")
+```
+
+```{r}
+start5_final_trial <- start5_all_paths_df %>%
+  group_by(sim_id) %>%
+  slice_max(order_by = cohort, n=1, with_ties = FALSE) %>%
+  ungroup() %>%
+  mutate(total_enrolled = cohort * 5)
+
+start5_paths_summary <- start5_final_trial %>%
+  summarise(
+    mean_total_sample_size = mean(total_enrolled),
+    quantile_95_sample_size = quantile(total_enrolled, 0.95),
+    median_number_of_cohort = median(cohort),
+    median_target_dose = log10(median(current_dose))
+  )
+
+start5_paths_summary
+```
+
+what if we use cohort of size 7?
+```{r}
+setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/old decision rule')
+
+cohort7_all_posteriors <- read.csv("posterior_sim_result_cohort7.csv")
+cohort7_all_paths_df <- read.csv("all_paths_cohort7.csv")
+cohort7_id70_df <- read.csv("id70_cohort7.csv")
+```
+
+```{r}
+cohort7_final_trial <- cohort7_all_paths_df %>%
+  group_by(sim_id) %>%
+  slice_max(order_by = cohort, n=1, with_ties = FALSE) %>%
+  ungroup() %>%
+  mutate(total_enrolled = cohort * 5)
+
+cohort7_paths_summary <- cohort7_final_trial %>%
+  summarise(
+    mean_total_sample_size = mean(total_enrolled),
+    quantile_95_sample_size = quantile(total_enrolled, 0.95),
+    median_number_of_cohort = median(cohort),
+    median_target_dose = log10(median(current_dose))
+  )
+
+cohort7_paths_summary
+```
+
+
+what if we use cohort of size 10?
+
+```{r}
+setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/old decision rule')
+
+cohort10_all_posteriors <- read.csv("posterior_sim_result_cohort10.csv")
+cohort10_all_paths_df <- read.csv("all_paths_cohort10.csv")
+cohort10_id70_df <- read.csv("id70_cohort10.csv")
+```
+
+```{r}
+cohort10_final_trial <- cohort10_all_paths_df %>%
+  group_by(sim_id) %>%
+  slice_max(order_by = cohort, n=1, with_ties = FALSE) %>%
+  ungroup() %>%
+  mutate(total_enrolled = cohort * 10)
+
+cohort10_paths_summary <- cohort10_final_trial %>%
+  summarise(
+    mean_total_sample_size = mean(total_enrolled),
+    quantile_95_sample_size = quantile(total_enrolled, 0.95),
+    median_number_of_cohort = median(cohort),
+    median_target_dose = log10(median(current_dose))
+  )
+
+cohort10_paths_summary
+```
+

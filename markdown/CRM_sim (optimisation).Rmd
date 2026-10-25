@@ -1,0 +1,939 @@
+---
+title: "CRM_sim (optimisation)"
+output: html_document
+date: "2026-08-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(truncnorm)
+library(cowplot)
+library(rstan)
+
+setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project')
+```
+
+```{r}
+setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/expected_info_2')
+
+# design1 <- read.csv("optimisation_results_design1.csv")
+# design2 <- read.csv("optimisation_results_design2.csv")
+# design3 <- read.csv("optimisation_results_design3.csv")
+# design4 <- read.csv("optimisation_results_design4.csv")
+# design5 <- read.csv("optimisation_results_design5.csv")
+# design6 <- read.csv("optimisation_results_design6.csv")
+# design7 <- read.csv("optimisation_results_design7.csv")
+# design8 <- read.csv("optimisation_results_design8.csv")
+
+# opt_results <- bind_rows(design1, design2, design3, design4, design5, design6, design7, design8)
+
+opt_results <- read.csv("adaptive_design_results.csv")
+
+# opt_results <- opt_results %>%
+#   group_by(design_id, sim_id) %>%
+#   arrange(cohort, .by_group = TRUE) %>%
+#   mutate(
+#     utility_gain = selected_expected_utility - lag(selected_expected_utility, default = 0)
+#   ) %>%
+#   ungroup()
+
+```
+
+
+
+```{r}
+# 1. Calculate cumulative utility within each simulated trial
+utility_plot_data <- opt_results %>%
+  arrange(design_id, sim_id, cohort) %>%
+  # Average cumulative utility across simulations
+  group_by(design_id, cohort) %>%
+  summarise(
+    mean_cumulative_expected_utility = mean(
+      current_expected_utility,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  )
+
+plot1 <- ggplot(utility_plot_data, aes(x = cohort, y = mean_cumulative_expected_utility, group = factor(design_id), colour = factor(design_id))) +
+  geom_line(na.rm=TRUE, linewidth = 1) +
+  scale_color_brewer(palette = "Set1", name = "Design ID") +
+  labs(title = "Average Cumulative Expected Utility by Cohort",
+       x = "Cohort",
+       y = "Average Cumulative Expected Utility") +
+  scale_x_continuous(breaks = 1:7) +
+  theme_bw() +
+  guides(colour = guide_legend(override.aes = list(linewidth = 3)))
+
+ggsave("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/optimisation/avg_cum_exp_utility2.png",
+       plot1)
+
+plot1
+```
+
+Possible visualisation with full data:
+- MAE, RMSE, or bias in the posterior \(ID_{70}\) estimate against cumulative sample size.
+- MAE by design at final dose
+- trade-off plot in accuracy with cohort/sample size
+
+
+Extracting the final dose for each simulation and calculate the error to true ID70
+```{r}
+final_results <- opt_results %>%
+  group_by(design_id, sim_id) %>%
+  arrange(cohort, .by_group = TRUE) %>%
+  slice_tail(n = 1) %>%
+  ungroup() %>%
+  mutate(
+    final_log10_dose = log10(current_dose)
+  )
+
+true_prior <- read.csv("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/expected_info_2/true_priors.csv")
+
+# True beta-Poisson infection probability
+true_infection_prob <- function(dose, log10_id70, a) {
+
+  id70 <- 10^log10_id70
+
+  b <- id70 / (0.3^(-1 / a) - 1)
+
+  1 - (1 + dose / b)^(-a)
+}
+
+
+
+final_results <- final_results %>% 
+  left_join(true_prior, by = "sim_id") %>%
+  mutate(
+    dose_error =
+      final_log10_dose - true_log10_id70,
+
+    abs_dose_error =
+      abs(dose_error),
+
+    squared_dose_error =
+      dose_error^2,
+    
+    true_prob_selected = true_infection_prob(
+      dose = current_dose,
+      log10_id70 = true_log10_id70,
+      a = true_a
+    ),
+
+    correct_target_selection =
+      true_prob_selected >= 0.6 &
+      true_prob_selected <= 0.8
+  ) 
+    
+  
+```
+
+```{r}
+design_performance <- final_results %>%
+  group_by(design_id) %>%
+  summarise(
+
+    # accuracy
+    mean_abs_error = mean(abs_dose_error, na.rm = TRUE),
+    
+    mae_lower = quantile(abs_dose_error, 0.025),
+    
+    mae_upper = quantile(abs_dose_error, 0.975),
+
+    median_abs_error = median(abs_dose_error, na.rm = TRUE),
+
+    rmse = sqrt(mean(dose_error^2, na.rm = TRUE)),
+
+    # directional bias
+    mean_bias = mean(dose_error, na.rm = TRUE),
+
+    # final information
+    mean_cumulative_utility = mean(current_expected_utility, na.rm = TRUE),
+    
+    target_selection_rate = mean(correct_target_selection),
+    
+    selection_rate_lower = quantile(true_prob_selected, 0.025),
+    
+    selection_rate_upper = quantile(true_prob_selected, 0.975),
+
+    .groups = "drop"
+  )
+
+design_performance
+```
+
+```{r}
+trade_off_plot<- ggplot(design_performance, aes(x = mean_abs_error, y = mean_cohorts)) +
+  geom_point() +
+  geom_text(
+    aes(label = design_id) , nudge_y = 0.2) +
+  labs(
+    x = "Mean absolute final-dose error",
+    y = "Mean cohort number",
+    title = "Accuracy–Cohort trade-off across designs"
+  ) +
+  theme_bw()
+
+# ggsave("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/optimisation/accuracy_cohort_tradeoff_plot2.png", trade_off_plot)
+
+trade_off_plot
+```
+
+```{r}
+ggplot(design_performance, aes(x = mean_abs_error, y = mean_sample_size)) +
+  geom_point() +
+  geom_text(
+    aes(label = design_id),
+    nudge_y = 0.1
+  ) +
+  labs(
+    x = "Mean absolute final-dose error",
+    y = "Total sample size",
+    title = "Accuracy–Sample size trade-off across designs"
+  ) +
+  theme_bw()
+```
+
+
+
+bias plot with error bar to visualise the the final dose bias to the true ID70 prior by design
+
+```{r}
+
+ggplot(design_performance, aes(x = factor(design_id), y = mean_abs_error)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = mae_lower, ymax = mae_upper, width=0.1)) +
+  labs(
+    x = "Design",
+    y = expression(
+      log[10](d[final]) - log[10](ID70[true])
+    ),
+    title = "Bias in final dose selection"
+  ) +
+  theme_bw()
+
+```
+
+
+```{r}
+final_posterior_id70 <- read.csv("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/expected_info_2/adaptive_final_id70.csv")
+
+final_posterior_id70 <- final_posterior_id70 %>%
+  mutate(
+    post_log_mean = log10(mean),
+    dose_error =
+      post_log_mean - true_log10_id70,
+
+    abs_dose_error =
+      abs(dose_error),
+
+    squared_dose_error =
+      dose_error^2
+  )
+
+final_posterior_performance <- final_posterior_id70 %>%
+  group_by(design_id) %>%
+  summarise(
+
+    # accuracy
+    mean_abs_error = mean(abs_dose_error, na.rm = TRUE),
+    
+    mae_lower = quantile(abs_dose_error, 0.025),
+    
+    mae_upper = quantile(abs_dose_error, 0.975),
+
+    median_abs_error = median(abs_dose_error, na.rm = TRUE),
+
+    rmse = sqrt(mean(dose_error^2, na.rm = TRUE)),
+
+    # directional bias
+    mean_bias = mean(dose_error, na.rm = TRUE),
+
+    .groups = "drop"
+  )
+
+final_posterior_performance
+
+```
+
+```{r}
+ggplot(final_posterior_performance, aes(x = factor(design_id), y = mean_abs_error)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = mae_lower, ymax = mae_upper, width=0.1)) +
+  labs(
+    x = "Design",
+    y = expression(
+      log[10](ID70[final_posterior]) - log[10](ID70[true])
+    ),
+    title = "Bias between final posterior ID70 and true ID70"
+  ) +
+  theme_bw()
+```
+
+
+```{r}
+final_posterior_performance$cohort <- c(7,6,6,5,5,4,4,3)
+final_posterior_performance$total_sample_size <- c(35,30,35,30,35,30,35,30)
+
+p <- ggplot(final_posterior_performance, aes(x = mean_abs_error, y = cohort)) +
+  geom_point() +
+  geom_text(
+    aes(label = design_id),
+    nudge_y = 0.1
+  ) +
+  labs(
+    #x = expression(log[10](ID70[final_posterior]) - log[10](ID70[true])),
+    x = "Mean Absolute Error",
+    y = "Cohort Number Used",
+    title = "ID70 Accuracy–Cohort Trade-off Across Designs"
+  ) +
+  theme_bw()
+
+ggsave("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/optimisation/post_id70accuracy_cohort_tradeoff_plot.png", p)
+
+p
+```
+
+Evolution of posterior ID70 estimation accuracy, examine how it changes throughout recruitment
+```{r}
+setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/expected_info_2')
+
+post_id70_all_designs <- read.csv("adaptive_post_id70.csv")
+
+post_id70_all_designs$log10_id70_mean <- log10(post_id70_all_designs$mean)
+post_id70_all_designs$log10_id70_lower <- log10(post_id70_all_designs$id70_lower)
+post_id70_all_designs$log10_id70_upper <- log10(post_id70_all_designs$id70_upper)
+post_id70_all_designs$log10_id70_absolute_error <- 
+  abs(post_id70_all_designs$log10_id70_mean - post_id70_all_designs$true_log10_id70)
+
+post_id70_summary <- post_id70_all_designs %>%
+  group_by(design_id, cohort) %>%
+  summarise(
+    mean_absolute_error = mean(log10_id70_absolute_error),
+    mae_lower = mean(log10_id70_lower),
+    mae_upper = mean(log10_id70_upper),
+    .groups = "drop"
+  )
+
+estimation_accuracy_tracjectory <- 
+  ggplot(post_id70_summary, aes(x = cohort , y = mean_absolute_error, colour = factor(design_id), group = factor(design_id))) +
+  geom_point() +
+  geom_line(linewidth = 0.8) +
+  scale_color_brewer(palette = "Set1", name = "Design") +
+  labs(
+    title = "Trajectories of Posterior ID70 Accuracy by Designs",
+    x = "Cohort",
+    y = "Mean Absolute Error"
+  ) +
+  scale_x_continuous(breaks = 1:7) +
+  theme_bw()
+
+ggsave("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/optimisation/posterior_ID70_accuracy_tracjectories.png",
+       estimation_accuracy_tracjectory)
+
+estimation_accuracy_tracjectory
+```
+
+
+
+Exploring if the final selected dose's posterior probability of infection falls between target infection range of 60 - 80%
+```{r}
+rstan_options(auto_write = TRUE)
+setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project')
+crm_stan2 <- stan_model("code/CRM stan.stan")
+
+doses <- 10^(3:7)
+
+extract_final_posterior <- function(trial_path) {
+  
+  final_dose <- trial_path %>%
+  arrange(cohort) %>%
+  slice_tail(n=1) %>%
+  pull(current_dose)
+
+  final_idx <- match(final_dose, doses)
+  
+  counts <- trial_path %>%
+    group_by(current_dose) %>%
+    summarise(
+      n = sum(cohort_size),
+      y = sum(infected),
+      .groups = "drop"
+    )
+  
+  n <- numeric(length(doses))
+  y <- numeric(length(doses))
+  
+  idx <- match(counts$current_dose, doses)
+  
+  n[idx] <- counts$n
+  y[idx] <- counts$y
+  
+  fit <- rstan::sampling(
+        crm_stan2,
+        data = list(
+          K = length(doses),
+          dose = doses,
+          n = n,
+          y = y
+        ),
+        chains = 4,
+        iter = 2000,
+        warmup = 1000,
+        refresh = 0,
+        cores = 1
+      )
+  
+  selected_dose_post_draw <- rstan::extract(fit)$p[, final_idx]
+  
+  data.frame(
+    final_dose = final_dose,
+    
+    posterior_target_prob = mean(selected_dose_post_draw >= 0.6 & selected_dose_post_draw <= 0.8),
+    
+    posterior_prob_mean <- mean(selected_dose_post_draw),
+    
+    posterior_prob_lower <- quantile(selected_dose_post_draw, 0.025),
+    
+    posterior_prob_upper <- quantile(selected_dose_post_draw, 0.975)
+  )
+}
+
+
+final_post_results <- opt_results %>%
+  group_by(design_id, sim_id) %>%
+  group_modify(~ extract_final_posterior(.x)) %>%
+  ungroup()
+
+
+write.csv(final_post_results, "C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/expected_info_2/final posterior prob inf.csv", row.names = FALSE)
+
+final_post_results <- read.csv("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/expected_info_2/final posterior prob inf.csv")
+```
+
+
+```{r, fig.width=15, fig.height=8}
+final_post_results <- final_post_results %>%
+  mutate(
+    coverage = case_when(
+      posterior_prob_lower....quantile.selected_dose_post_draw..0.025. <= 0.8 & 
+        posterior_prob_upper....quantile.selected_dose_post_draw..0.975. >= 0.6 ~ "Overlapped",
+      
+      posterior_prob_lower....quantile.selected_dose_post_draw..0.025. >= 0.6 & 
+        posterior_prob_upper....quantile.selected_dose_post_draw..0.975. <= 0.8 ~ "Entirely within",
+      
+      TRUE ~ "Not Covered"
+      
+    )
+  ) %>%
+  group_by(design_id) %>%
+  arrange(posterior_prob_mean....mean.selected_dose_post_draw., .by_group = TRUE) %>%
+  mutate(sim_order = row_number()) %>%
+  ungroup()
+
+
+p <- ggplot(final_post_results, aes(x = sim_order, ymin = posterior_prob_lower....quantile.selected_dose_post_draw..0.025., ymax = posterior_prob_upper....quantile.selected_dose_post_draw..0.975., colour = coverage)) +
+  
+  geom_linerange(linewidth = 0.2, alpha = 0.4) +
+  
+  geom_hline(
+    yintercept = c(0.60, 0.80),
+    linetype = "dashed",
+    colour = "black",
+    linewidth = 0.35
+  ) +
+  
+  facet_wrap(~design_id, ncol=2, labeller = labeller(design_id = function(x) paste("Design", x))) +
+  
+  scale_colour_manual(values = c("Entirely within" = "#228B22",
+                                 "Overlapped" = "#3182BD",
+                                 "Not Covered" = "#E31A1C")) +
+  
+  guides(
+  colour = guide_legend(
+    override.aes = list(
+      linewidth = 2,
+      alpha = 1
+      )
+    )
+  ) +
+  
+  scale_y_continuous(limits = c(0,1), breaks = seq(0,1,0.2)) +
+  
+  labs(
+    x = "Simulation (ordered by posterior mean infection probability)",
+    y = "Posterior infection probability at final cohort dose",
+    colour = "95% credible interval"
+  ) +
+  
+  theme_bw() +
+  
+  theme(
+    strip.background = element_rect(fill = "grey90"),
+    strip.text = element_text(face = "bold", size = 15),
+    legend.position = "bottom",
+    panel.grid.minor = element_blank(),
+    # X and Y axis titles
+    axis.title.x = element_text(size = 16),
+    axis.title.y = element_text(size = 16),
+  
+    # X and Y axis tick labels
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+  
+    # Legend title and labels
+    legend.title = element_text(size = 16),
+    legend.text = element_text(size = 15),
+  )
+
+ggsave("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/final_dose_posterior_prob_per_design.pdf", p,
+       width = 14, height = 14)
+
+p
+```
+
+```{r}
+coverage_summary <- final_post_results %>%
+  group_by(design_id) %>%
+  summarise(
+    n_sim = n(),
+
+    prop_entirely_within =
+      mean(coverage == "Entirely within"),
+
+    prop_overlapping =
+      mean(coverage == "Overlapped"),
+
+    prop_outside =
+      mean(coverage == "Outside"),
+
+    mean_posterior_prob_final_dose =
+      mean(posterior_prob_mean....mean.selected_dose_post_draw.),
+    
+    mean_lower_bound = mean(posterior_prob_lower....quantile.selected_dose_post_draw..0.025.),
+    
+    mean_upper_bound = mean(posterior_prob_upper....quantile.selected_dose_post_draw..0.975.),
+
+    .groups = "drop"
+  )
+
+print(coverage_summary)
+```
+
+
+Trimming the results since we run all trials in full length (WE DONT TRIM NOW)
+
+```{r}
+trimmed_results <- opt_results %>%
+  arrange(design_id, sim_id, cohort) %>%
+  group_by(design_id, sim_id) %>%
+  
+  # cumulative number treated at each dose
+  mutate(
+    cumulative_n_at_dose = ave(cohort_size, current_dose, FUN = cumsum)
+  ) %>%
+  # first cohort where current dose reaches/exceeds 20 participants
+  mutate(
+    stop_cohort = ifelse(
+      any(cumulative_n_at_dose >= 20),
+      min(cohort[cumulative_n_at_dose >= 20]),
+      Inf)
+  ) %>%
+  # keep everything up to and including stopping cohort
+  filter(
+    cohort <= stop_cohort
+  ) %>%
+  
+  ungroup()
+  
+```
+
+```{r}
+utility_plot_trimmed_data <- trimmed_results %>%
+  arrange(design_id, sim_id, cohort) %>%
+  # Average cumulative utility across simulations
+  group_by(design_id, cohort) %>%
+  summarise(
+    mean_cumulative_expected_utility = mean(
+      current_expected_utility,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  )
+
+ggplot(utility_plot_trimmed_data, aes(x = cohort, y = mean_cumulative_expected_utility, group = factor(design_id), colour = factor(design_id))) +
+  geom_line(na.rm=TRUE, linewidth = 1) +
+  scale_color_brewer(palette = "Set1", name = "Design ID") +
+  labs(title = "Average Cumulative Expected Utility by Cohort (With Stopping Criteria)",
+       x = "Cohort",
+       y = "Average cumulative expected utility") +
+  scale_x_continuous(breaks = 1:7) +
+  theme_bw()
+```
+
+
+```{r}
+# Calculate the totals per simulation within each design
+sim_summary <- trimmed_results %>%
+  group_by(design_id, sim_id) %>%
+  summarise(
+    cohort_count = n(),
+    total_cohort_size = sum(cohort_size)
+  )
+
+# Calculate the averages across simulations *for each design*
+design_averages <- sim_summary %>%
+  group_by(design_id) %>%
+  summarise(
+    median_cohort_count = median(cohort_count),
+    mean_total_sample_size = mean(total_cohort_size)
+  )
+
+design_averages
+
+```
+
+Now we visualise the results from the final cohort
+
+Extracting the true prior values from simulation and match with each trial. There are 500 sets of true priors that were used for all design to make it a fair comparison across designs. 
+```{r}
+
+trimmed_final_results <- trimmed_results %>%
+  group_by(design_id, sim_id) %>%
+  arrange(cohort, .by_group = TRUE) %>%
+  slice_tail(n = 1) %>%
+  ungroup() %>%
+  mutate(
+    final_log10_dose = log10(current_dose)
+  )
+
+true_prior <- read.csv("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/expected_info_2/true_priors.csv")
+
+trimmed_final_results <- trimmed_final_results %>% 
+  left_join(true_prior, by = "sim_id") %>%
+  mutate(
+    dose_error =
+      final_log10_dose - true_log10_id70,
+
+    abs_dose_error =
+      abs(dose_error),
+
+    squared_dose_error =
+      dose_error^2
+  )
+
+trimmed_design_performance <- trimmed_final_results %>%
+  group_by(design_id) %>%
+  summarise(
+
+    # accuracy
+    mean_abs_error = mean(abs_dose_error, na.rm = TRUE),
+    
+    mae_lower = quantile(abs_dose_error, 0.025),
+    
+    mae_upper = quantile(abs_dose_error, 0.975),
+
+    median_abs_error = median(abs_dose_error, na.rm = TRUE),
+
+    rmse = sqrt(mean(dose_error^2, na.rm = TRUE)),
+
+    # directional bias
+    mean_bias = mean(dose_error, na.rm = TRUE),
+
+    # resource use
+    mean_sample_size = mean(total_enrolled, na.rm = TRUE),
+
+    mean_cohorts = mean(cohort, na.rm = TRUE),
+
+    # final information
+    mean_cumulative_utility = mean(current_expected_utility, na.rm = TRUE),
+
+    .groups = "drop"
+  )
+
+trimmed_design_performance
+```
+
+
+```{r}
+all_post_id70 <- read.csv("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/expected_info_2/adaptive_post_id70.csv")
+
+trim_all_post_id70 <- all_post_id70 %>%
+  full_join(opt_results) %>%
+  group_by(design_id, sim_id) %>%
+  
+  # cumulative number treated at each dose
+  mutate(
+    cumulative_n_at_dose = ave(cohort_size, current_dose, FUN = cumsum)
+  ) %>%
+  # first cohort where current dose reaches/exceeds 20 participants
+  mutate(
+    stop_cohort = ifelse(
+      any(cumulative_n_at_dose >= 20),
+      min(cohort[cumulative_n_at_dose >= 20]),
+      Inf)
+  ) %>%
+  # keep everything up to and including stopping cohort
+  filter(
+    cohort <= stop_cohort
+  ) %>%
+  arrange(cohort, .by_group = TRUE) %>%
+  slice_tail(n = 1) %>%
+  ungroup()  %>%
+  mutate(
+    log10_id70_mean = log10(mean),
+    log10_id70_lower = log10(id70_lower), 
+    log10_id70_upper = log10(id70_upper),
+    
+    dose_error =
+      log10_id70_mean - true_log10_id70,
+
+    abs_dose_error =
+      abs(dose_error),
+
+    squared_dose_error =
+      dose_error^2
+  )
+
+
+trimmed_posterior_performance <- trim_all_post_id70 %>%
+  group_by(design_id) %>%
+  summarise(
+
+    # accuracy
+    mean_abs_error = mean(abs_dose_error, na.rm = TRUE),
+    
+    mae_lower = quantile(abs_dose_error, 0.025),
+    
+    mae_upper = quantile(abs_dose_error, 0.975),
+
+    median_abs_error = median(abs_dose_error, na.rm = TRUE),
+
+    rmse = sqrt(mean(dose_error^2, na.rm = TRUE)),
+
+    # directional bias
+    mean_bias = mean(dose_error, na.rm = TRUE),
+
+    # resource use
+    mean_sample_size = mean(total_enrolled, na.rm = TRUE),
+
+    mean_cohorts = mean(cohort, na.rm = TRUE),
+
+    # final information
+    mean_cumulative_utility = mean(current_expected_utility, na.rm = TRUE),
+
+    .groups = "drop"
+  )
+
+trimmed_posterior_performance
+```
+
+
+
+```{r}
+ggplot(trimmed_design_performance, aes(x = mean_abs_error, y = mean_cohorts)) +
+  geom_point() +
+  geom_text(
+    aes(label = design_id),
+    nudge_y = 0.1
+  ) +
+  labs(
+    x = "Mean absolute final-dose error",
+    y = "Mean cohort number",
+    title = "Accuracy–Cohort Trade-off Across Designs (With Stopping Criteria)"
+  ) +
+  theme_bw()
+```
+
+A plot to see how close each final dose is to the true ID70 value, with a reference line of true_log(ID70) = final_log(D)
+```{r}
+ggplot(trimmed_final_results, aes(x = true_log10_id70, y = final_log10_dose)) +
+  geom_abline(
+    intercept = 0,
+    slope = 1,
+    linetype = "dashed"
+  ) +
+  geom_point(
+    alpha = 0.5
+  ) +
+  facet_wrap(~ design_id) +
+  
+  labs(
+    x = expression("True " * log[10](ID70)),
+    y = expression(log[10]("Final dose")),
+    title = "Final dose selection versus true ID70"
+  ) +
+  theme_bw()
+```
+
+
+
+
+
+
+
+
+Distribution of stopping cohort. When does the stopping rule terminate each design?
+
+```{r}
+stopping_cohort_summary <- trimmed_final_results %>%
+  count(design_id, cohort) %>%
+  group_by(design_id) %>%
+  mutate(
+    proportion = n / sum(n)
+  ) %>%
+  ungroup()
+
+ggplot(stopping_cohort_summary, aes(x = factor(cohort), y = proportion, fill = factor(design_id))) +
+  geom_col() +
+  facet_wrap(~ design_id) +
+  scale_fill_brewer(palette = "Set1", name = "Design ID") +
+  scale_y_continuous(
+    labels = scales::percent
+  ) +
+  labs(
+    x = "Stopping cohort",
+    y = "Proportion of simulated trials",
+    title = "Stopping cohort under early stopping rule"
+  ) +
+  theme_bw()
+```
+
+```{r}
+sample_size_summary <- trimmed_final_results %>%
+  count(design_id, total_enrolled) %>%
+  group_by(design_id) %>%
+  mutate(
+    proportion = n / sum(n)
+  ) %>%
+  ungroup()
+
+ggplot(sample_size_summary, aes(x = factor(total_enrolled), y = proportion, fill = factor(design_id))) +
+  geom_col() +
+  facet_wrap(~ design_id) +
+  scale_fill_brewer(palette = "Set1", name = "Design ID") +
+  scale_y_continuous(
+    labels = scales::percent
+  ) +
+  labs(
+    x = "Final sample size",
+    y = "Proportion of simulated trials",
+    title = "Final sample size under the early stopping rule"
+  ) +
+  theme_bw()
+```
+
+Maybe we can also compare how full length data is different from the trimmed results by inspecting how far off is the final dose to true ID70?
+```{r}
+# Final result if trial ran to full length
+full_final <- opt_results %>%
+  group_by(design_id, sim_id) %>%
+  arrange(cohort, .by_group = TRUE) %>%
+  slice_tail(n = 1) %>%
+  ungroup() %>%
+  mutate(
+    final_log10_dose = log10(current_dose)
+  ) %>% 
+  left_join(true_prior, by = "sim_id") %>%
+  mutate(
+    dose_error =
+      final_log10_dose - true_log10_id70,
+
+    abs_dose_error =
+      abs(dose_error),
+
+    squared_dose_error =
+      dose_error^2
+  ) %>%
+  select(
+    design_id,
+    sim_id,
+    full_N = total_enrolled,
+    full_abs_error = abs_dose_error
+  )
+
+trimmed_final <- trimmed_final_results %>%
+  select(
+    design_id,
+    sim_id,
+    trimmed_N = total_enrolled,
+    trimmed_abs_error = abs_dose_error
+  )
+
+trim_comparison <- trimmed_final %>%
+  left_join(
+    full_final,
+    by = c(
+      "design_id",
+      "sim_id"
+    )
+  ) %>%
+  mutate(
+    participants_saved =
+      full_N - trimmed_N,
+
+    change_in_abs_error =
+      trimmed_abs_error - full_abs_error
+  )
+```
+
+```{r}
+trim_comparison %>%
+  group_by(design_id) %>%
+  summarise(
+    mean_N_trimmed = mean(trimmed_N),
+    mean_N_full = mean(full_N),
+
+    mean_saved = mean(participants_saved),
+
+    mean_AE_trimmed = mean(trimmed_abs_error),
+    mean_AE_full = mean(full_abs_error),
+
+    mean_change_AE = mean(change_in_abs_error),
+
+    .groups = "drop"
+  )
+```
+
+
+```{r}
+# all possible combinations of cohort structure
+n_grid <- expand.grid(
+  replicate(7, c(5,10), simplify = FALSE)
+)
+
+names(n_grid) <- paste0("n", 1:7)
+
+n_grid <- n_grid %>%
+  rowwise() %>%
+  filter(
+    !is.unsorted(c_across(n1:n7)) # check if the row is sorted in ascending order
+  ) %>% 
+  ungroup()
+
+for (i in 1:nrow(n_grid)) {
+  
+  count = 0 
+  max_sample = 35
+  
+  for (j in 1:ncol(n_grid)) {
+    count = count + n_grid[i, j]
+    
+    if (count > max_sample) {
+      n_grid[i, j] = NA
+    }
+  }
+}
+
+
+design_matrix <- n_grid
+
+design_matrix
+```
+

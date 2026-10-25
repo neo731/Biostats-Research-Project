@@ -1,0 +1,70 @@
+---
+title: "ID70_scenarios (new decision)"
+output: html_document
+date: "2026-04-08"
+---
+
+```{r}
+library(rstan)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(magick)
+library(truncnorm)
+
+```
+
+
+```{r}
+setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/new decision rule')
+
+all_posteriors <- read.csv("posterior_scenarios_sim.csv")
+all_paths_df <- read.csv("all_paths_scenarios.csv")
+id70_df <- read.csv("id70_scenarios.csv")
+```
+
+
+```{r}
+final_trials <- all_paths_df %>%
+  group_by(scenario, sim_id) %>%
+  slice_max(order_by = cohort, n=1, with_ties = FALSE) %>%
+  ungroup()
+
+study_summary <- final_trials %>%
+  group_by(scenario) %>%
+  summarise(
+    # the mean study size along with 95% CI
+    avg_study_size = mean(total_enrolled),
+    study_size_lo95 = quantile(total_enrolled, 0.025),
+    study_size_hi95 = quantile(total_enrolled, 0.975),
+    
+    # mean number of participants in each scenario
+    mean_N_at_target = mean(cum_n_at_target_dose, na.rm = TRUE),
+    
+    # median number of cohorts for each scenario
+    median_n_cohorts = median(cohort),
+    
+    .groups = "drop"
+  )
+
+study_summary
+```
+
+```{r}
+id70_summary_by_cohort <- id70_df %>%
+  group_by(cohort) %>%
+  summarise(
+    id70_mean = log10(mean(mean)),
+    id70_median = log10(median(mean)),
+    id70_sd = log10(sd(mean)),
+    id70_lo = log10(quantile(mean, 0.025)),
+    id70_hi = log10(quantile(mean, 0.975)),
+    id70_q1 = log10(quantile(mean, 0.25)),
+    id70_q3 = log10(quantile(mean, 0.75)),
+    n_trials = n(),
+    .groups = "drop"
+  )
+
+id70_summary_by_cohort
+```
+

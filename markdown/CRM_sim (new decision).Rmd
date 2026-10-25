@@ -1,0 +1,55 @@
+---
+title: "CRM_simulation"
+output: html_document
+date: "2026-03-18"
+---
+
+This markdown file consists all functions and code that are necessary for the CRM simulation 
+of the human challenge study. Functions are implemented to assist the simulations for 
+respective tasks.
+
+We first load necessary libraries, setting working directory, and getting the stan model
+from the stan file loaded. The stan file consists of codes that are relevant to the Bayesian framework, such as components that come into the data block, parameters, transformed parameters, and
+distribution for priors and likelihood.
+
+```{r}
+library(rstan)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(magick)
+
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+
+setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project')
+
+```
+
+```{r}
+setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/new decision rule')
+
+all_posteriors <- read.csv("posterior_sim_result.csv")
+all_paths_df <- read.csv("all_paths.csv")
+id70_df <- read.csv("id70.csv")
+```
+
+
+```{r}
+final_trial <- all_paths_df %>%
+  group_by(sim_id) %>%
+  slice_max(order_by = cohort, n=1, with_ties = FALSE) %>%
+  ungroup() %>%
+  mutate(total_enrolled = cohort * 5)
+
+paths_summary <- final_trial %>%
+  summarise(
+    mean_total_sample_size = mean(total_enrolled),
+    quantile_95_sample_size = quantile(total_enrolled, 0.95),
+    median_number_of_cohort = median(cohort),
+    median_target_dose = log10(median(current_dose))
+  )
+
+paths_summary
+```
+

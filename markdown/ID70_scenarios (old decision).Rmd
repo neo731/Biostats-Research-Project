@@ -1,0 +1,526 @@
+---
+title: "ID70_scenarios"
+output: pdf_document
+date: "2026-03-27"
+---
+
+```{r}
+
+library(rstan)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(magick)
+library(truncnorm)
+
+setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project')
+
+```
+
+
+This markdown provides summary for the ID70 scenario-based evaluation, where we picked the 5%, 25%, 50%, 75% and 95% quantiles of the prior predictive ID70. The true ID70 that were used for the 5 scenarios are: 3.17, 3.65, 4.11, 4.61 and 5.37. The set of parameters, a and b were computed based on these ID70 true values, and each scenario will simulate 100 times.
+
+The purpose of the scenario-based simulation is to examine the performance and robustness of the CRM design, under different "true realities" that could plausibly occur given the prior. While the proposed priors can imply many possible true curves on the dose-response model, we are picking 5 scenarios where ID70 is low, middle, and high, to check if the design behave well no matter where the true ID70 lies. If the performance is poor even within the prior's plausible range, then the prior could be poorly specified or the design rules might need to be tuned.
+
+We aim to report the following result to check for robustness:
+1. the average study size and number of cohorts needed for each scenario, does the trial finish quickly?
+2. ID70 mean across all cohorts, does it appear to be stable?
+3. Mean N at target dose (the dose where the trial stops), dose the design spend enough patients at the right dose?
+
+
+```{r}
+setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/old decision rule')
+
+all_posteriors <- read.csv("posterior_scenarios_sim.csv")
+all_paths_df <- read.csv("all_paths_scenarios.csv")
+id70_df <- read.csv("id70_scenarios.csv")
+```
+
+
+Get the final row for each simulated trial to get a sense of summary on how each trial ends
+```{r}
+final_trials <- all_paths_df %>%
+  group_by(scenario, sim_id) %>%
+  slice_max(order_by = cohort, n=1, with_ties = FALSE) %>%
+  ungroup()
+
+final_trials
+```
+
+
+Getting summary statistics for the 5 scenarios from simulations, which includes average study size, their respective 2.5% and 97.5% quantile, mean number of participants at target dose, and median number of cohorts that were required for the study. 
+```{r}
+study_summary <- final_trials %>%
+  group_by(scenario) %>%
+  summarise(
+    # the mean study size along with 95% CI
+    avg_study_size = mean(total_enrolled),
+    study_size_lo95 = quantile(total_enrolled, 0.025),
+    study_size_hi95 = quantile(total_enrolled, 0.975),
+    
+    # mean number of participants in each scenario
+    mean_N_at_target = mean(cum_n_at_target_dose, na.rm = TRUE),
+    
+    # median number of cohorts for each scenario
+    median_n_cohorts = median(cohort),
+
+    .groups = "drop"
+  )
+
+study_summary
+```
+
+```{r}
+final_post_id70 <- id70_df %>%
+  group_by(scenario, sim_id) %>%
+  slice_max(order_by = cohort, n=1, with_ties = FALSE) %>%
+  ungroup()
+
+final_post_id70$log10_id70_mean <- log10(final_post_id70$mean)
+final_post_id70$log10_id70_lower <- log10(final_post_id70$id70_lower)
+final_post_id70$log10_id70_upper <- log10(final_post_id70$id70_upper)
+
+summary_id70 <- final_post_id70 %>% 
+  group_by(scenario, sim_id) %>%
+  summarise(
+    final_id70_mean = mean(log10_id70_mean),
+    final_id70_lower = mean(log10_id70_lower),
+    final_id70_upper = mean(log10_id70_upper),
+    .groups = "drop"
+  ) %>% 
+  left_join(true_id70_df, by = "scenario") %>%
+  mutate(
+    true_log10_id70 = log10(true_id70),
+    coverage = final_id70_lower <= true_log10_id70 &
+               final_id70_upper >= true_log10_id70,
+    scenario = factor(
+      scenario,
+      levels = c(
+        "Scenario_05",
+        "Scenario_25",
+        "Scenario_50",
+        "Scenario_75",
+        "Scenario_95"
+      ),
+      labels = paste("Scenario", 1:5)
+      )
+  )
+
+scen_plot <- ggplot(summary_id70, aes(x = sim_id, group = scenario)) +
+  # 95% credible intervals
+  geom_linerange(aes(ymin = final_id70_lower, ymax = final_id70_upper), 
+                 colour = "grey45", linewidth = 0.35) +
+  
+  # Posterior mean
+  geom_point(aes(y = final_id70_mean), colour = "black", size = 0.6) +
+  
+  # True ID70
+  geom_hline(aes(yintercept = true_log10_id70), colour = "steelblue", linewidth = 0.7) +
+  
+  # One scenario per row
+  facet_wrap(~ scenario, ncol=1, scales = "fixed") +
+
+  scale_x_continuous(breaks = seq(0, 100, 25)) +
+  
+  labs(x = "Simulation Number", y = expression(log[10] * "(ID"[70] * " / CFU)")) +
+
+  theme_bw(base_size = 12) +
+
+  theme(strip.background = element_rect(fill = "grey90", colour = "grey50"),
+    strip.text = element_text(face = "bold", size = 11, angle = 0),
+    panel.spacing = unit(0.25, "cm")
+  )
+
+ggsave("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/final_id70_per_scenario.png",
+       scen_plot)
+
+scen_plot
+  
+```
+How many simulations covered the true ID70 value at the final cohort?
+```{r}
+coverage_summary <- summary_id70 %>%
+  group_by(scenario) %>%
+  summarise(
+    n_sim = n(),
+    coverage_95 = mean(coverage),
+    mean_CrI_width = mean(
+      final_id70_upper - final_id70_lower
+    ),
+    .groups = "drop"
+  )
+
+print(coverage_summary)
+```
+
+
+```{r}
+id70_summary_by_cohort <- id70_df %>%
+  group_by(scenario, cohort) %>%
+  summarise(
+    id70_mean = log10(mean(mean)),
+    id70_median = log10(median(mean)),
+    id70_sd = log10(sd(mean)),
+    id70_lo = log10(quantile(mean, 0.025)),
+    id70_hi = log10(quantile(mean, 0.975)),
+    id70_q1 = log10(quantile(mean, 0.25)),
+    id70_q3 = log10(quantile(mean, 0.75)),
+    n_trials = n(),
+    .groups = "drop"
+  )
+
+id70_summary_by_cohort
+```
+
+The following plot is displaying the ID70 mean (along with their 95% error bar) for each cohort across simulations. ID70 mean seems to be pretty constant and stable across all cohorts, from the example shown below for Scen50, where we took the median of ID70 as the true value. 
+```{r}
+plot_dir <- "C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/id70_bias"
+
+# true ID70 values by scenario
+true_id70_df <- data.frame(
+  scenario = c("Scenario_05", "Scenario_25", "Scenario_50", "Scenario_75", "Scenario_95"),
+  true_id70 = c(1488.717, 4441.525, 12942.783, 40637.928, 232301.884)
+)
+
+# merge true values onto the cohort summary
+id70_bias_df <- id70_summary_by_cohort %>%
+  left_join(true_id70_df, by = "scenario") %>%
+  mutate(
+    true_log10 = log10(true_id70),
+    bias = true_log10 - id70_mean,
+    bias_lo = true_log10 - id70_hi,
+    bias_hi = true_log10 - id70_lo
+  )
+
+# create and save one plot per scenario
+for (scen in unique(id70_bias_df$scenario)) {
+  
+  df_plot <- id70_bias_df %>%
+    filter(scenario == scen)
+  
+  p <- ggplot(df_plot, aes(x = cohort, y = bias)) +
+    geom_point(size = 2) +
+    geom_errorbar(aes(ymin = bias_lo, ymax = bias_hi), width = 0.1) +
+    scale_x_continuous(breaks = unique(df_plot$cohort)) +
+    labs(
+      x = "Cohort",
+      y = "Bias (log10 scale)",
+      title = paste("Bias of ID70 estimate across cohorts (", scen, ")", sep = "")
+    ) +
+    theme_bw()
+  
+  ggsave(
+    filename = paste0("bias_id70_", scen, ".png"),
+    path = plot_dir,
+    plot = p,
+    width = 6,
+    height = 4
+  )
+}
+
+bias_plot_url <- c(
+  "/bias_id70_Scenario_05.png",
+  "/bias_id70_Scenario_25.png",
+  "/bias_id70_Scenario_50.png",
+  "/bias_id70_Scenario_75.png",
+  "/bias_id70_Scenario_95.png"
+)
+bias_imgs <- image_read(bias_plot_url)
+
+biasplot_grid <- image_montage(
+    bias_imgs, 
+    tile = '2', 
+    geometry = "x400+10+10", 
+    bg = "white"
+    )
+  
+# Save the final montage
+image_write(biasplot_grid, "C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/id70_bias/combined_bias_plot.png", format = 'png')
+```
+The plot above shows that the ID70 mean per cohort on average are not too far off from the true ID70, which shows the robustness of the method design. I think this sort of make sense since our prior distribution for ID70 has mean of 4, since the true ID70 for the sceanrio above is about 4.11, we are slightly overestimating the ID70 per cohort.
+
+
+The following table is to check on average, how each scenario updates ID70 and its variation (add the true ID70) ()
+```{r}
+id70_scenario_sum <- id70_df %>%
+  group_by(scenario) %>%
+  summarise(
+    mean_id70 = log10(mean(mean)),
+    id70_lo = log10(quantile(mean, 0.025)),
+    id70_hi = log10(quantile(mean, 0.975)),
+    .groups = "drop"
+  )
+
+id70_scenario_sum
+```
+
+This is the function to produce posterior plot for one of the simulation as an example to show that the learning dynamics are going well, ie posterior curve gets narrower
+```{r}
+plot_aggregated_curve_with_points <- function(example_posterior, one_sim_points, id70) {
+  
+  img_url = c()
+  plot_dir <- "C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/scenario_example_post"
+  
+  for (cohort_i in sort(unique(one_sim_points$cohort))) {
+  
+    df_cohort <- example_posterior %>%
+      filter(cohort == cohort_i)
+  
+    # keep points observed up to this cohort
+    pts <- one_sim_points %>%
+      filter(cohort <= !!cohort_i) 
+    
+    # collapse duplicate point locations into one label
+    pts_lab <- pts %>%
+    group_by(current_dose, prob) %>%
+    summarise(
+      label = paste(cohort, collapse = ","),
+      .groups = "drop"
+    )
+    
+    # ID70 summary for this cohort
+    id70_df <- id70 %>%
+      filter(cohort == !!cohort_i)
+    
+    p <- ggplot(df_cohort, aes(x = dose, y = mean)) +
+      # 95% credible intervals for the posterior curve
+      geom_ribbon(aes(ymin = lower, ymax = upper),
+                alpha = 0.25, fill = "steelblue") +
+      geom_ribbon(aes(ymin = q1, ymax = q3),
+                alpha = 0.25, fill = "blue") +
+    
+      # 95% ID70 range as vertical band
+      geom_rect(
+        data = id70_df,
+        aes(xmin = id70_lower, xmax = id70_upper, ymin = -Inf, ymax = Inf),
+        inherit.aes = FALSE,
+        fill = "gray46",
+        alpha = 0.2
+      ) +
+      
+      # points for observation
+      geom_point(
+        data = pts,
+        aes(x = current_dose, y = prob),
+        color = "black",
+        size = 2.5,
+        inherit.aes = FALSE
+      ) +
+      
+      geom_text(
+        data = pts_lab,
+        aes(x = current_dose, y = prob, label = label),
+        nudge_y = 0.04,
+        size = 4,
+        inherit.aes = FALSE
+      ) +
+      
+      geom_hline(yintercept = 0.70, color = "red", linewidth = 0.4) +
+      geom_hline(yintercept = c(0.60, 0.80),
+                 color = "red", linetype = "dashed", linewidth = 0.2) +
+      
+      scale_x_log10(
+        breaks = 10^(1:9),               # Sets ticks at each power of 10
+        labels = function(x) log10(x)    # Converts 10, 100, 1000 -> 1, 2, 3
+      ) +
+      
+      theme_bw() +
+      coord_cartesian(ylim = c(0, 1.05)) +
+      labs(
+        title = paste("Aggregated posterior curve after Cohort", cohort_i),
+        x = expression("Dose (" * log[10] ~ "CFU)"),
+        y = "Probability of infection"
+      )
+    
+    # saving the individual plots to the designated folder
+    file_name <- paste0("aggregated_posterior_with_points_cohort_", cohort_i, ".png")
+    full_path <- file.path(plot_dir, file_name)
+    
+    ggsave(
+        filename = file_name,
+        path = plot_dir,
+        plot = p,
+        width = 6,
+        height = 4
+      )
+    
+    # Append the path to our list
+    img_url <- c(img_url, full_path)
+    
+  }
+  
+  imgs <- image_read(img_url)
+
+  final_grid <- image_montage(
+    imgs, 
+    tile = '2', 
+    geometry = "x400+10+10", 
+    bg = "white"
+    )
+  
+  # Save the final montage
+  image_write(final_grid, "C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/scenario_example_post/combined_cohort_plots_with_decision.png", format = 'png')
+  
+}
+
+```
+
+
+This is to provide an example plot for posterior simulation to showcase the posterior update after each cohort and its decision rule. It is apparent that the posterior curve and the credible interval for ID70 gets narrower after each cohort are being added, as the MCMC simulation learns more information and is able to take in information via iteration effectively.
+```{r}
+cohort_size <- 5
+all_paths_df$prob <- all_paths_df$infected / cohort_size
+
+one_sim <- all_paths_df %>%
+  filter(scenario == "Scenario_50") %>%
+  filter(sim_id == 3)
+
+example_post <- all_posteriors %>%
+  filter(scenario == "Scenario_50") %>%
+  filter(sim_id == 3)
+
+example_id70 <- id70_df %>%
+  filter(scenario == "Scenario_50") %>%
+  filter(sim_id == 3)
+
+plot_aggregated_curve_with_points(example_post, one_sim, example_id70)
+```
+
+
+
+Attmpeting to plot quantiles on quantiles for the posterior credible intervals for each scenarios. We first group by scenario, followed by the cohort and dose, then generate the quantile for each posterior quantile to come up with 4 bands in the plot. This is to visualise how does the variability behaves across cohort.
+```{r}
+q2q <- all_posteriors %>%
+  group_by(scenario, cohort, dose) %>% 
+  summarise(
+    lower95_lo = quantile(lower, 0.025),
+    lower95_hi = quantile(lower, 0.975),
+    lower95_med = median(lower),
+    
+    upper95_lo = quantile(upper, 0.025),
+    upper95_hi = quantile(upper, 0.975),
+    upper95_med = median(upper),
+    
+    lower50_lo = quantile(q1, 0.025),
+    lower50_hi = quantile(q1, 0.975),
+    lower50_med = median(q1),
+    
+    upper50_lo = quantile(q3, 0.025),
+    upper50_hi = quantile(q3, 0.975),
+    upper50_med = median(q3),
+    
+    .groups = "drop"
+  )
+
+```
+
+```{r}
+exp_q2q <- q2q %>% filter(scenario == "Scenario_95")
+```
+
+```{r}
+plot_aggregated_curve <- function(df) {
+  
+  img_url = c()
+  plot_dir <- "C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/posterior_q_in_q"
+  
+  for (cohort_i in sort(unique(df$cohort))) {
+    
+    df_agg <- df %>% filter(cohort == cohort_i)
+  
+    p <- ggplot() +
+      # uncertainty band for lower edge of the 95% posterior band
+      geom_ribbon(
+        data = df_agg,
+        aes(x = dose, ymin = lower95_lo, ymax = lower95_hi),
+        alpha = 0.20, fill = "blue"
+      ) +
+      # uncertainty band for upper edge of the 95% posterior band
+      geom_ribbon(
+        data = df_agg,
+        aes(x = dose, ymin = upper95_lo, ymax = upper95_hi),
+        alpha = 0.20, fill = "steelblue"
+      ) +
+      # uncertainty band for lower edge of the 50% posterior band
+      geom_ribbon(
+        data = df_agg,
+        aes(x = dose, ymin = lower50_lo, ymax = lower50_hi),
+        alpha = 0.20, fill = "gray60"
+      ) +
+      # uncertainty band for upper edge of the 50% posterior band
+      geom_ribbon(
+        data = df_agg,
+        aes(x = dose, ymin = upper50_lo, ymax = upper50_hi),
+        alpha = 0.20, fill = "gray40"
+      ) +
+      # dotted median boundary lines
+      geom_line(
+        data = df_agg,
+        aes(x = dose, y = lower95_med),
+        linetype = "dotted",
+        color = "blue",
+        linewidth = 0.7
+      ) +
+      geom_line(
+        data = df_agg,
+        aes(x = dose, y = upper95_med),
+        linetype = "dotted",
+        color = "steelblue4",
+        linewidth = 0.7
+      ) +
+      geom_line(
+        data = df_agg,
+        aes(x = dose, y = lower50_med),
+        linetype = "dotted",
+        color = "gray30",
+        linewidth = 0.7
+      ) +
+      geom_line(
+        data = df_agg,
+        aes(x = dose, y = upper50_med),
+        linetype = "dotted",
+        color = "black",
+        linewidth = 0.7
+      ) +
+      scale_x_log10() +
+      theme_bw() +
+      ylim(0, 1) +
+      labs(
+        title = paste("Aggregated posterior curve - Cohort", cohort_i),
+        x = "Dose (CFU)",
+        y = "Probability of infection"
+      )
+    
+    # saving the individual plots to the designated folder
+    file_name <- paste0("aggregated_posterior_with_cohort_", cohort_i, ".png")
+    full_path <- file.path(plot_dir, file_name)
+    
+    ggsave(
+        filename = file_name,
+        path = plot_dir,
+        plot = p,
+        width = 6,
+        height = 4
+      )
+    
+    # Append the path to our list
+    img_url <- c(img_url, full_path)
+  }
+  
+  imgs <- image_read(img_url)
+
+  final_grid <- image_montage(
+    imgs, 
+    tile = '2', 
+    geometry = "x400+10+10", 
+    bg = "white"
+    )
+  
+  # Save the final montage
+  image_write(final_grid, "C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/posterior_q_in_q/combined_aggregated_post.png", format = 'png')
+  
+}
+
+plot_aggregated_curve(exp_q2q)
+```
+
