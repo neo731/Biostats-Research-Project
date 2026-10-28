@@ -29,7 +29,6 @@ library(magick)
 library(truncnorm)
 library(cowplot)
 
-setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project')
 ```
 
 ```{r}
@@ -78,7 +77,7 @@ cri_data <- plot_data_3 %>%
 plot_aggregated_curve_with_points <- function(example_posterior, one_sim_points, id70, prior_band, true_prior) {
   
   img_url = c()
-  plot_dir <- "C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/example posterior sim"
+  plot_dir <- "plots/example posterior sim"
   
   shared_legend <- NULL
   
@@ -319,7 +318,7 @@ plot_aggregated_curve_with_points <- function(example_posterior, one_sim_points,
   
   
   # Save the final montage
-  image_write(final_with_legend, "C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/example posterior sim/combined_cohort_plots_with_decision.png", format = 'png')
+  image_write(final_with_legend, "plots/example posterior sim/combined_cohort_plots_with_decision.png", format = 'png')
   
 }
 ```
@@ -328,7 +327,7 @@ plot_aggregated_curve_with_points <- function(example_posterior, one_sim_points,
 
 loading the simulated results again so we can report the results 
 ```{r}
-setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/old decision rule')
+setwd('simulation result/old decision rule')
 
 all_posteriors <- read.csv("posterior_sim_result_3.csv")
 all_paths_df <- read.csv("all_paths_3.csv")
@@ -401,7 +400,7 @@ print(log10(mean(id70_df$mean)))
 
 
 ```{r}
-true_param <- read.csv("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/old decision rule/1000_true_params.csv")
+true_param <- read.csv("simulation result/old decision rule/1000_true_params.csv")
 ```
 
 
@@ -685,10 +684,7 @@ p3 <- ggplot(final_id_70_error, aes(x = sim_id)) +
   legend.key.width = unit(1.5, "cm")
   )
 
-ggsave("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/prior_predictive_posterior_ID70coverage.png", p3,
-       width = 16, height = 6)
-
-ggsave("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/prior_predictive_posterior_ID70coverage.pdf", p3,
+ggsave("plots/prior_predictive_posterior_ID70coverage.pdf", p3,
        width = 16, height = 6)
 
 p3
@@ -702,7 +698,7 @@ What if we start the dose at 10^3?
 here is the results for comparison
 
 ```{r}
-setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/old decision rule')
+setwd('simulation result/old decision rule')
 
 start3_all_posteriors <- read.csv("posterior_sim_result_start3.csv")
 start3_all_paths_df <- read.csv("all_paths_start3.csv")
@@ -732,7 +728,7 @@ What if we start the dose at 10^5?
 here is the results for comparison
 
 ```{r}
-setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/old decision rule')
+setwd('simulation result/old decision rule')
 
 start5_all_posteriors <- read.csv("posterior_sim_result_start5.csv")
 start5_all_paths_df <- read.csv("all_paths_start5.csv")
@@ -759,7 +755,7 @@ start5_paths_summary
 
 what if we use cohort of size 7?
 ```{r}
-setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/old decision rule')
+setwd('simulation result/old decision rule')
 
 cohort7_all_posteriors <- read.csv("posterior_sim_result_cohort7.csv")
 cohort7_all_paths_df <- read.csv("all_paths_cohort7.csv")
@@ -788,7 +784,7 @@ cohort7_paths_summary
 what if we use cohort of size 10?
 
 ```{r}
-setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/old decision rule')
+setwd('simulation result/old decision rule')
 
 cohort10_all_posteriors <- read.csv("posterior_sim_result_cohort10.csv")
 cohort10_all_paths_df <- read.csv("all_paths_cohort10.csv")

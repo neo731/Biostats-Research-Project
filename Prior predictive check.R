@@ -3,7 +3,7 @@ library(dplyr)
 library(tidyr)
 library(truncnorm)
 
-setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots')
+setwd('')
 
 # prior predictive check
 # beta-poisson function
@@ -302,4 +302,115 @@ ggsave(
   dpi = 300
 )
 
+
+# Beta-Poisson dose-response function
+p_inf <- function(dose, a, b) {
+  1 - (1 + dose / b)^(-a)
+}
+
+# Parameter values
+a_values <- c(0.3, 0.4, 0.5, 0.6, 0.7, 0.8)
+b_values <- 10^seq(2, 5, length.out = 6)
+
+# Fixed reference parameters
+a_fixed <- 0.5
+b_fixed <- 1000
+
+# Dose range
+dose_values <- 10^seq(1, 9, length.out = 500)
+
+# Panel A: Vary a, keep b fixed
+panel_a <- expand_grid(
+  dose = dose_values,
+  a = a_values
+) %>%
+  mutate(
+    b = b_fixed,
+    p = p_inf(dose, a, b),
+    parameter = factor(
+      paste0("a = ", a),
+      levels = paste0("a = ", a_values)
+    ),
+    panel = "A. Varying a (fixed b = 1000)"
+  )
+
+# Panel B: Vary b, keep a fixed
+panel_b <- expand_grid(
+  dose = dose_values,
+  b = b_values
+) %>%
+  mutate(
+    a = a_fixed,
+    p = p_inf(dose, a, b),
+    parameter = factor(
+      paste0("b = ", signif(b, 3)),
+      levels = paste0("b = ", signif(b_values, 3))
+    ),
+    panel = "B. Varying b (fixed a = 0.5)"
+  )
+
+# Combine data
+curve_data <- bind_rows(panel_a, panel_b) %>%
+  mutate(
+    panel = factor(
+      panel,
+      levels = c(
+        "A. Varying a (fixed b = 1000)",
+        "B. Varying b (fixed a = 0.5)"
+      )
+    )
+  )
+
+# Two-panel figure
+example_dose_response_curve <- ggplot(
+  curve_data,
+  aes(x = dose, y = p, colour = parameter)
+) +
+  geom_line(linewidth = 1.1) +
+  
+  geom_hline(
+    yintercept = 0.7,
+    linetype = "dotted",
+    colour = "red",
+    linewidth = 0.7
+  ) +
+  
+  facet_wrap(
+    ~ panel,
+    ncol = 2
+  ) +
+  
+  scale_x_log10(
+    limits = c(10^1, 10^9),
+    breaks = 10^(1:9),
+    labels = 1:9,
+    expand = c(0, 0)
+  ) +
+  
+  scale_y_continuous(
+    limits = c(0, 1),
+    expand = c(0, 0)
+  ) +
+  
+  scale_colour_viridis_d(
+    option = "D",
+    end = 0.9,
+    name = "Parameter value"
+  ) +
+  
+  labs(
+    title = "Effects of Beta-Poisson Parameters on Dose-Response Curves",
+    x = expression("Dose (" * log[10] ~ "CFU)"),
+    y = "Probability of Infection"
+  ) +
+  
+  theme_classic(base_size = 13) +
+  theme(
+    legend.position = "bottom",
+    strip.background = element_blank(),
+    strip.text = element_text(face = "bold", size = 12),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+example_dose_response_curve
   

@@ -44,7 +44,7 @@ design_matrix <- n_grid
 
 # CRM setup same as before
 rstan_options(auto_write = TRUE)
-setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project')
+
 crm_stan2 <- stan_model("code/CRM stan.stan")
 
 
@@ -86,7 +86,7 @@ start_stan_cluster <- function(
       
       rstan_options(auto_write = TRUE)
       
-      setwd("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project")
+      setwd("")
       
       crm_stan2 <- stan_model("code/CRM stan.stan")
       

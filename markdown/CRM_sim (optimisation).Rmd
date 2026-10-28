@@ -16,32 +16,12 @@ library(truncnorm)
 library(cowplot)
 library(rstan)
 
-setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project')
 ```
 
+Reading in the simulated data
 ```{r}
-setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/expected_info_2')
 
-# design1 <- read.csv("optimisation_results_design1.csv")
-# design2 <- read.csv("optimisation_results_design2.csv")
-# design3 <- read.csv("optimisation_results_design3.csv")
-# design4 <- read.csv("optimisation_results_design4.csv")
-# design5 <- read.csv("optimisation_results_design5.csv")
-# design6 <- read.csv("optimisation_results_design6.csv")
-# design7 <- read.csv("optimisation_results_design7.csv")
-# design8 <- read.csv("optimisation_results_design8.csv")
-
-# opt_results <- bind_rows(design1, design2, design3, design4, design5, design6, design7, design8)
-
-opt_results <- read.csv("adaptive_design_results.csv")
-
-# opt_results <- opt_results %>%
-#   group_by(design_id, sim_id) %>%
-#   arrange(cohort, .by_group = TRUE) %>%
-#   mutate(
-#     utility_gain = selected_expected_utility - lag(selected_expected_utility, default = 0)
-#   ) %>%
-#   ungroup()
+opt_results <- read.csv("simulation result/expected_info_2/adaptive_design_results.csv")
 
 ```
 
@@ -71,7 +51,7 @@ plot1 <- ggplot(utility_plot_data, aes(x = cohort, y = mean_cumulative_expected_
   theme_bw() +
   guides(colour = guide_legend(override.aes = list(linewidth = 3)))
 
-ggsave("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/optimisation/avg_cum_exp_utility2.png",
+ggsave("plots/optimisation/avg_cum_exp_utility2.png",
        plot1)
 
 plot1
@@ -94,7 +74,7 @@ final_results <- opt_results %>%
     final_log10_dose = log10(current_dose)
   )
 
-true_prior <- read.csv("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/expected_info_2/true_priors.csv")
+true_prior <- read.csv("simulation result/expected_info_2/true_priors.csv")
 
 # True beta-Poisson infection probability
 true_infection_prob <- function(dose, log10_id70, a) {
@@ -131,8 +111,8 @@ final_results <- final_results %>%
       true_prob_selected <= 0.8
   ) 
     
-  
-```
+```  
+
 
 ```{r}
 design_performance <- final_results %>%
@@ -155,6 +135,10 @@ design_performance <- final_results %>%
 
     # final information
     mean_cumulative_utility = mean(current_expected_utility, na.rm = TRUE),
+    
+    cumulative_utility_lower = quantile(current_expected_utility, 0.025),
+    
+    cumulative_utility_upper = quantile(current_expected_utility, 0.975),
     
     target_selection_rate = mean(correct_target_selection),
     
@@ -179,8 +163,6 @@ trade_off_plot<- ggplot(design_performance, aes(x = mean_abs_error, y = mean_coh
     title = "Accuracy–Cohort trade-off across designs"
   ) +
   theme_bw()
-
-# ggsave("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/optimisation/accuracy_cohort_tradeoff_plot2.png", trade_off_plot)
 
 trade_off_plot
 ```
@@ -222,7 +204,7 @@ ggplot(design_performance, aes(x = factor(design_id), y = mean_abs_error)) +
 
 
 ```{r}
-final_posterior_id70 <- read.csv("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/expected_info_2/adaptive_final_id70.csv")
+final_posterior_id70 <- read.csv("simulation result/expected_info_2/adaptive_final_id70.csv")
 
 final_posterior_id70 <- final_posterior_id70 %>%
   mutate(
@@ -295,14 +277,14 @@ p <- ggplot(final_posterior_performance, aes(x = mean_abs_error, y = cohort)) +
   ) +
   theme_bw()
 
-ggsave("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/optimisation/post_id70accuracy_cohort_tradeoff_plot.png", p)
+ggsave("plots/optimisation/post_id70accuracy_cohort_tradeoff_plot.png", p)
 
 p
 ```
 
 Evolution of posterior ID70 estimation accuracy, examine how it changes throughout recruitment
 ```{r}
-setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/expected_info_2')
+setwd('simulation result/expected_info_2')
 
 post_id70_all_designs <- read.csv("adaptive_post_id70.csv")
 
@@ -334,7 +316,7 @@ estimation_accuracy_tracjectory <-
   scale_x_continuous(breaks = 1:7) +
   theme_bw()
 
-ggsave("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/optimisation/posterior_ID70_accuracy_tracjectories.png",
+ggsave("plots/optimisation/posterior_ID70_accuracy_tracjectories.png",
        estimation_accuracy_tracjectory)
 
 estimation_accuracy_tracjectory
@@ -345,7 +327,7 @@ estimation_accuracy_tracjectory
 Exploring if the final selected dose's posterior probability of infection falls between target infection range of 60 - 80%
 ```{r}
 rstan_options(auto_write = TRUE)
-setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project')
+
 crm_stan2 <- stan_model("code/CRM stan.stan")
 
 doses <- 10^(3:7)
@@ -412,9 +394,9 @@ final_post_results <- opt_results %>%
   ungroup()
 
 
-write.csv(final_post_results, "C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/expected_info_2/final posterior prob inf.csv", row.names = FALSE)
+write.csv(final_post_results, "simulation result/expected_info_2/final posterior prob inf.csv", row.names = FALSE)
 
-final_post_results <- read.csv("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/expected_info_2/final posterior prob inf.csv")
+final_post_results <- read.csv("simulation result/expected_info_2/final posterior prob inf.csv")
 ```
 
 
@@ -492,7 +474,7 @@ p <- ggplot(final_post_results, aes(x = sim_order, ymin = posterior_prob_lower..
     legend.text = element_text(size = 15),
   )
 
-ggsave("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/final_dose_posterior_prob_per_design.pdf", p,
+ggsave("plots/final_dose_posterior_prob_per_design.pdf", p,
        width = 14, height = 14)
 
 p
@@ -613,7 +595,7 @@ trimmed_final_results <- trimmed_results %>%
     final_log10_dose = log10(current_dose)
   )
 
-true_prior <- read.csv("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/expected_info_2/true_priors.csv")
+true_prior <- read.csv("simulation result/expected_info_2/true_priors.csv")
 
 trimmed_final_results <- trimmed_final_results %>% 
   left_join(true_prior, by = "sim_id") %>%

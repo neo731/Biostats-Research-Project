@@ -13,8 +13,6 @@ library(tidyr)
 library(magick)
 library(truncnorm)
 
-setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project')
-
 ```
 
 
@@ -29,7 +27,7 @@ We aim to report the following result to check for robustness:
 
 
 ```{r}
-setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/simulation result/old decision rule')
+setwd('simulation result/old decision rule')
 
 all_posteriors <- read.csv("posterior_scenarios_sim.csv")
 all_paths_df <- read.csv("all_paths_scenarios.csv")
@@ -131,12 +129,13 @@ scen_plot <- ggplot(summary_id70, aes(x = sim_id, group = scenario)) +
     panel.spacing = unit(0.25, "cm")
   )
 
-ggsave("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/final_id70_per_scenario.png",
+ggsave("plots/final_id70_per_scenario.png",
        scen_plot)
 
 scen_plot
   
 ```
+
 How many simulations covered the true ID70 value at the final cohort?
 ```{r}
 coverage_summary <- summary_id70 %>%
@@ -173,13 +172,13 @@ id70_summary_by_cohort
 ```
 
 The following plot is displaying the ID70 mean (along with their 95% error bar) for each cohort across simulations. ID70 mean seems to be pretty constant and stable across all cohorts, from the example shown below for Scen50, where we took the median of ID70 as the true value. 
-```{r}
-plot_dir <- "C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/id70_bias"
+```{r, fig.width=15, fig.height=8}
 
 # true ID70 values by scenario
 true_id70_df <- data.frame(
   scenario = c("Scenario_05", "Scenario_25", "Scenario_50", "Scenario_75", "Scenario_95"),
-  true_id70 = c(1488.717, 4441.525, 12942.783, 40637.928, 232301.884)
+  true_id70 = c(1488.717, 4441.525, 12942.783, 40637.928, 232301.884),
+  scenario_label = paste("Scenario", 1:5)
 )
 
 # merge true values onto the cohort summary
@@ -187,57 +186,100 @@ id70_bias_df <- id70_summary_by_cohort %>%
   left_join(true_id70_df, by = "scenario") %>%
   mutate(
     true_log10 = log10(true_id70),
-    bias = true_log10 - id70_mean,
-    bias_lo = true_log10 - id70_hi,
-    bias_hi = true_log10 - id70_lo
-  )
-
-# create and save one plot per scenario
-for (scen in unique(id70_bias_df$scenario)) {
-  
-  df_plot <- id70_bias_df %>%
-    filter(scenario == scen)
-  
-  p <- ggplot(df_plot, aes(x = cohort, y = bias)) +
-    geom_point(size = 2) +
-    geom_errorbar(aes(ymin = bias_lo, ymax = bias_hi), width = 0.1) +
-    scale_x_continuous(breaks = unique(df_plot$cohort)) +
-    labs(
-      x = "Cohort",
-      y = "Bias (log10 scale)",
-      title = paste("Bias of ID70 estimate across cohorts (", scen, ")", sep = "")
-    ) +
-    theme_bw()
-  
-  ggsave(
-    filename = paste0("bias_id70_", scen, ".png"),
-    path = plot_dir,
-    plot = p,
-    width = 6,
-    height = 4
-  )
-}
-
-bias_plot_url <- c(
-  "/bias_id70_Scenario_05.png",
-  "/bias_id70_Scenario_25.png",
-  "/bias_id70_Scenario_50.png",
-  "/bias_id70_Scenario_75.png",
-  "/bias_id70_Scenario_95.png"
-)
-bias_imgs <- image_read(bias_plot_url)
-
-biasplot_grid <- image_montage(
-    bias_imgs, 
-    tile = '2', 
-    geometry = "x400+10+10", 
-    bg = "white"
+    bias =  id70_mean - true_log10,
+    bias_lo = id70_lo - true_log10,
+    bias_hi = id70_hi - true_log10,
+    scenario_label = factor(
+      scenario_label,
+      levels = paste("Scenario", 1:5)
     )
+  )
+
+# Add number of trials contributing at each cohort
+trial_counts <- all_paths_df %>%
+  group_by(scenario, cohort) %>%
+  summarise(
+    n_trials = n_distinct(sim_id),
+    .groups = "drop"
+  )
+
+id70_bias_df <- id70_bias_df %>%
+  left_join(
+    trial_counts,
+    by = c("scenario", "cohort")
+  )
+
+y_max <- max(
+  abs(c(id70_bias_df$bias_lo, id70_bias_df$bias_hi)),
+  na.rm = TRUE
+)
+
+# Add some space for count annotations
+y_limit <- ceiling(y_max * 1.15 * 10) / 10
+
+
+bias_plot_grid <- ggplot(id70_bias_df, aes(x = cohort, y = bias)) +
+  # Horizontal line at zero bias
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "red", linewidth = 0.8) +
+  # Error bars
+  geom_errorbar(
+    aes(ymin = bias_lo, ymax = bias_hi),
+    width = 0.12,
+    linewidth = 0.6
+  ) + 
   
-# Save the final montage
-image_write(biasplot_grid, "C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/id70_bias/combined_bias_plot.png", format = 'png')
+   # Mean bias points
+  geom_point(size = 2) + 
+  
+  # Number of trials at each cohort
+  geom_text(
+    aes(
+      y = y_limit * 0.9,
+      label = paste0("n=", n_trials.y)
+    ),
+    size = 6,
+    colour = "blue"
+  ) +
+
+  # Five panels
+  facet_wrap(
+    ~ scenario_label,
+    ncol = 2,
+    scales = "fixed"
+  ) +
+
+  scale_x_continuous(
+    breaks = sort(unique(id70_bias_df$cohort))
+  ) +
+
+  scale_y_continuous(
+    limits = c(-y_limit, y_limit),
+    breaks = pretty(c(-y_limit, y_limit), n = 7)
+  ) +
+
+  labs(
+    x = "Cohort",
+    y = expression("Bias in " * log[10] * "(ID"[70] * ")")
+  ) +
+
+  theme_bw(base_size = 16) +
+
+  theme(
+    strip.text = element_text(
+      size = 18,
+      face = "bold"
+    ),
+    axis.title = element_text(size = 18),
+    axis.text = element_text(size = 14),
+    panel.grid.minor = element_blank(),
+    panel.spacing = grid::unit(1.2, "lines")
+  )
+
+ggsave("plots/id70_bias/combined_bias_plot.pdf", bias_plot_grid, width = 15, height = 14)
+
+bias_plot_grid
 ```
-The plot above shows that the ID70 mean per cohort on average are not too far off from the true ID70, which shows the robustness of the method design. I think this sort of make sense since our prior distribution for ID70 has mean of 4, since the true ID70 for the sceanrio above is about 4.11, we are slightly overestimating the ID70 per cohort.
+The plot above shows that the ID70 mean per cohort on average are not too far off from the true ID70, which shows the robustness of the method design. I think this sort of make sense since our prior distribution for ID70 has mean of 4, since the true ID70 for the scenario above is about 4.11, we are slightly overestimating the ID70 per cohort.
 
 
 The following table is to check on average, how each scenario updates ID70 and its variation (add the true ID70) ()
@@ -259,7 +301,7 @@ This is the function to produce posterior plot for one of the simulation as an e
 plot_aggregated_curve_with_points <- function(example_posterior, one_sim_points, id70) {
   
   img_url = c()
-  plot_dir <- "C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/scenario_example_post"
+  plot_dir <- "plots/scenario_example_post"
   
   for (cohort_i in sort(unique(one_sim_points$cohort))) {
   
@@ -359,7 +401,7 @@ plot_aggregated_curve_with_points <- function(example_posterior, one_sim_points,
     )
   
   # Save the final montage
-  image_write(final_grid, "C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/scenario_example_post/combined_cohort_plots_with_decision.png", format = 'png')
+  image_write(final_grid, "plots/scenario_example_post/combined_cohort_plots_with_decision.png", format = 'png')
   
 }
 
@@ -422,7 +464,7 @@ exp_q2q <- q2q %>% filter(scenario == "Scenario_95")
 plot_aggregated_curve <- function(df) {
   
   img_url = c()
-  plot_dir <- "C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/posterior_q_in_q"
+  plot_dir <- "plots/posterior_q_in_q"
   
   for (cohort_i in sort(unique(df$cohort))) {
     
@@ -517,7 +559,7 @@ plot_aggregated_curve <- function(df) {
     )
   
   # Save the final montage
-  image_write(final_grid, "C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/posterior_q_in_q/combined_aggregated_post.png", format = 'png')
+  image_write(final_grid, "plots/posterior_q_in_q/combined_aggregated_post.png", format = 'png')
   
 }
 

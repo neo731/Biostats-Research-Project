@@ -135,7 +135,7 @@ p <- ggplot() +
   ) 
 
 p
-ggsave("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/prior_predictive_scenarios.png", 
+ggsave("plots/prior_predictive_scenarios.png", 
        plot = p,
        width = 7, height = 5)
 
@@ -202,6 +202,6 @@ p2 <- ggplot() +
   )
 
 p2
-ggsave("C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project/plots/prior_predictive_sample_priors.png", 
+ggsave("plots/prior_predictive_sample_priors.png", 
        plot = p2,
        width = 7, height = 5)

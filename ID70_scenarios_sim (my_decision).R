@@ -5,7 +5,7 @@ library(tidyr)
 library(magick)
 library(truncnorm)
 
-setwd('C:/Users/Neo/OneDrive/Documents/Master of Biostats/Research project')
+setwd('')
 crm_stan2 <- stan_model("code/CRM stan 2.stan")
 
 
