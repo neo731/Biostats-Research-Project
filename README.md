@@ -5,11 +5,11 @@ The code folder contains all relevant code to run different simulations to valid
 Note that some code files were used for experimental purposes because the method implementation keeps getting updated during the project, and thus do not contribute to the final evaluation process. The script files that were used for simulations for the report/thesis will be highlighted and summarised below:
 
 1. CRM stan 2.stan: Stan file for Bayesian inference with specified model and priors
-2. CRM_sim (id70 prior my_decision).R: Prior-predictive evaluation with fixed decision rules
-3. ID70_scenarios_sim (my_decision).R: Scenario-based evaluation with fixed decision rules
-4. optimisation (post prob weight).R: Optimal design evaluation with adaptive decision rules (with parallel computing)
+2. CRM_sim (id70 prior my_decision).R: Prior-predictive evaluation with fixed decision rules (Part 1)
+3. ID70_scenarios_sim (my_decision).R: Scenario-based evaluation with fixed decision rules (Part 1)
+4. optimisation (post prob weight).R: Optimal design evaluation with adaptive decision rules (Part 2)
 
 There is also a sub-folder of R markdown files to evaluate the simulation results that come from the script file, and contributing to the results section of the report/thesis.
-1. CRM_sim (id70 prior old decision).rmd: evaluating the results from prior-predictive simulations
-2. ID70_scenarios (old decision).rmd: evaluating the results from scenario-based simulations
-3. CRM_sim (optimisation).rmd: evaluating the simulation results for all candidate designs with adaptive decision rules
+1. CRM_sim (id70 prior old decision).Rmd: evaluating the results from prior-predictive simulations (Part 1)
+2. ID70_scenarios (old decision).Rmd: evaluating the results from scenario-based simulations (Part 1)
+3. CRM_sim (optimisation).Rmd: evaluating the simulation results for all candidate designs with adaptive decision rules (Part 2)
